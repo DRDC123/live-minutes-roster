@@ -19,7 +19,14 @@ async function callFlow(url, body = {}) {
 
 function normaliseMember(item) {
   const person = item?.Member ?? item?.TeamMember ?? item?.Person
-  const name = item?.DisplayName ?? item?.Title ?? person?.DisplayName ?? person?.displayName ?? ''
+  function normaliseMember(item) {
+  return {
+    id: String(item.ID || ''),
+    name: String(item.Title || ''),
+    email: String(item.Email || '').toLowerCase(),
+    active: item.Active === true
+  };
+}
   const email = item?.Email ?? item?.MemberEmail ?? person?.Email ?? person?.email ?? ''
   const activeValue = item?.Active
   const active = activeValue === undefined || activeValue === null
