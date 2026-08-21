@@ -1,0 +1,45 @@
+import React,{useEffect,useMemo,useState}from'react'
+import{CalendarDays,ChevronLeft,ChevronRight,RefreshCw,Search,Settings,UserRoundCheck,Users}from'lucide-react'
+
+const PEOPLE_KEY='cpsr-people-v4'
+const CURRENT_USER={name:'Dharshni Rangarajan',email:'dharshni.rangarajan@dxc.com'}
+const defaultPeople=['Jennifer Cabading','Maisie Chandler','Samantha Gallen','Acille Kabbara','Dharshni Rangarajan','Chester Viernes','Curtis Wise-Lancaster']
+const slotPattern={Tuesday:['13:00','14:00'],Wednesday:['09:00','10:00','11:00'],Thursday:['09:00','10:00','11:00'],Friday:['13:00','14:00']}
+const days=['Tuesday','Wednesday','Thursday','Friday']
+const load=(key,fallback)=>{try{return JSON.parse(localStorage.getItem(key))||fallback}catch{return fallback}}
+const dateOnly=d=>new Date(d.getFullYear(),d.getMonth(),d.getDate())
+const addDays=(d,n)=>{const x=new Date(d);x.setDate(x.getDate()+n);return x}
+const mondayOf=d=>{const x=dateOnly(d),day=x.getDay()||7;return addDays(x,1-day)}
+const iso=d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+const displayTime=t=>new Intl.DateTimeFormat('en-AU',{hour:'numeric',minute:'2-digit'}).format(new Date(2026,0,1,+t.slice(0,2),+t.slice(3)))
+const dayIndex={Tuesday:1,Wednesday:2,Thursday:3,Friday:4}
+
+export default function App(){
+ const [week,setWeek]=useState(mondayOf(new Date()))
+ const [events,setEvents]=useState([]),[sync,setSync]=useState({state:'idle',message:'Not checked yet'})
+ const [claims,setClaims]=useState({}),[people,setPeople]=useState(()=>load(PEOPLE_KEY,defaultPeople))
+ const [filter,setFilter]=useState('all'),[query,setQuery]=useState(''),[saving,setSaving]=useState('')
+ useEffect(()=>localStorage.setItem(PEOPLE_KEY,JSON.stringify(people)),[people])
+
+ const fetchCalendar=async()=>{const r=await fetch(`/api/calendar?week=${iso(week)}`),j=await r.json();if(!j.ok)throw new Error(j.error);setEvents(j.events||[]);return j.events||[]}
+ const fetchAssignments=async()=>{const r=await fetch('/api/assignments',{cache:'no-store'}),j=await r.json();if(!j.ok)throw new Error(j.error);setClaims(Object.fromEntries((j.assignments||[]).map(a=>[`${a.date}|${a.time}`,a.owner])));return j.assignments||[]}
+ const syncAll=async()=>{setSync({state:'loading',message:'Checking live calendar and shared claims…'});try{const [calendar,assignments]=await Promise.all([fetchCalendar(),fetchAssignments()]);setSync({state:'ok',message:`${calendar.length} busy slot${calendar.length===1?'':'s'} loaded · ${assignments.length} shared claim${assignments.length===1?'':'s'}`})}catch(e){setSync({state:'error',message:`Sync unavailable: ${e.message}`})}}
+ useEffect(()=>{syncAll();const timer=setInterval(syncAll,60000);return()=>clearInterval(timer)},[iso(week)])
+
+ const slots=useMemo(()=>days.flatMap(day=>slotPattern[day].map(time=>{const date=iso(addDays(week,dayIndex[day])),key=`${date}|${time}`,event=events.find(e=>e.date===date&&e.time===time);return{day,date,time,key,event,owner:claims[key]||null}})),[week,events,claims])
+ const visible=slots.filter(s=>(filter==='all'||filter==='meeting'&&s.event||filter==='open'&&s.event&&!s.owner||filter==='none'&&!s.event)&&`${s.day} ${s.time} ${s.owner||''}`.toLowerCase().includes(query.toLowerCase()))
+ const stats=useMemo(()=>{const meetings=slots.filter(s=>s.event).length,open=slots.filter(s=>s.event&&!s.owner).length,covered=slots.filter(s=>s.event&&s.owner).length,mine=slots.filter(s=>s.event&&s.owner===CURRENT_USER.name).length;return{meetings,open,covered,mine,coverage:meetings===0?0:Math.round(covered/meetings*100)}},[slots])
+
+ const claim=async slot=>{if(saving)return;setSaving(slot.key);try{const r=await fetch('/api/assignments',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({meetingDate:slot.date,meetingTime:slot.time,assignedToEmail:CURRENT_USER.email,assignedToName:CURRENT_USER.name})}),j=await r.json();if(!j.ok)throw new Error(j.error);await fetchAssignments()}catch(e){alert(`Claim failed: ${e.message}`)}finally{setSaving('')}}
+ const release=async slot=>{if(saving)return;setSaving(slot.key);try{const r=await fetch('/api/assignments',{method:'DELETE',headers:{'content-type':'application/json'},body:JSON.stringify({meetingDate:slot.date,meetingTime:slot.time})}),j=await r.json();if(!j.ok)throw new Error(j.error);await fetchAssignments()}catch(e){alert(`Release failed: ${e.message}`)}finally{setSaving('')}}
+ const manage=()=>{const value=prompt('Enter active CPSR team members, one per line',people.join('\n'));if(value!==null)setPeople(value.split('\n').map(x=>x.trim()).filter(Boolean))}
+ const label=`${week.toLocaleDateString('en-AU',{day:'numeric',month:'short'})} – ${addDays(week,6).toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'})}`
+
+ return <div className="app-shell"><header className="header"><div className="header-inner"><div className="brand"><div className="brand-icon"><CalendarDays size={21}/></div><div><div className="brand-row"><h1>Live minutes roster</h1><span className="live-pill">LIVE</span></div><p>CPSR · Busy calendar events only · Shared claims</p></div></div><div className="header-actions"><button className="button secondary" onClick={manage}><Settings size={16}/>Manage team</button><button className="button" onClick={syncAll}><RefreshCw size={16}/>Sync</button></div></div></header>
+ <main className="layout"><section className="content"><div className="week-nav card"><button className="icon-button" onClick={()=>setWeek(addDays(week,-7))}><ChevronLeft/></button><div><strong>{label}</strong><input type="date" value={iso(week)} onChange={e=>setWeek(mondayOf(new Date(`${e.target.value}T12:00:00`)))}/></div><button className="button secondary" onClick={()=>setWeek(mondayOf(new Date()))}>This week</button><button className="icon-button" onClick={()=>setWeek(addDays(week,7))}><ChevronRight/></button></div>
+ <div className="summary-grid"><div className="card summary"><span>Meetings</span><strong>{stats.meetings}</strong></div><div className="card summary"><span>Needs cover</span><strong className="red">{stats.open}</strong></div><div className="card summary"><span>Covered</span><strong className="green">{stats.covered}</strong></div><div className="card summary"><span>My meetings</span><strong>{stats.mine}</strong></div><div className="card summary"><span>Coverage</span><strong>{stats.coverage}%</strong></div></div>
+ <div className={`sync-banner ${sync.state}`}><RefreshCw size={18}/><span>{sync.message}</span><small>Shared claims refresh every minute. Use Sync for an immediate update.</small></div>
+ <div className="toolbar card"><div className="filters">{[['all','All'],['meeting','Meetings'],['open','Open meetings'],['none','No meeting']].map(([v,l])=><button key={v} className={`filter ${filter===v?'active':''}`} onClick={()=>setFilter(v)}>{l}</button>)}</div><label className="search"><Search size={16}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search week"/></label></div>
+ <div className="days">{days.map(day=><article className="card day-card" key={day}><div className="day-heading"><h2>{day}</h2><span>{addDays(week,dayIndex[day]).toLocaleDateString('en-AU',{day:'numeric',month:'short'})}</span></div>{visible.filter(s=>s.day===day).map(s=><div className={`meeting-row ${!s.event?'no-meeting-row':''}`} key={s.key}><div className="meeting-time"><strong>{displayTime(s.time)}</strong><span className="duration">1 hour</span></div><div className="meeting-main">{s.event?<><strong>Busy CPSR meeting</strong><div className="meeting-meta"><span className={`status ${s.owner?'covered':'needs-cover'}`}><i/>{s.owner?'Covered':'Needs cover'}</span>{s.owner&&<span>Minutes: {s.owner}</span>}</div></>:<><strong>⚪ No CPSR meeting at the moment</strong><p className="slot-note">The usual slot remains visible.</p></>}</div><div className="meeting-actions">{s.event&&!s.owner&&<button disabled={saving===s.key} className="button" onClick={()=>claim(s)}><UserRoundCheck size={16}/>{saving===s.key?'Claiming…':'Claim'}</button>}{s.event&&s.owner&&<button disabled={saving===s.key} className="button ghost" onClick={()=>release(s)}>{saving===s.key?'Releasing…':'Release'}</button>}</div></div>)}</article>)}</div></section>
+ <aside className="sidebar"><div className="card panel"><div className="panel-title"><Users size={20}/><h3>Minutes team</h3></div><p>Active members · selected week</p><div className="team-list">{people.map(name=><div key={name}><span><i/>{name}</span><b>{slots.filter(s=>s.owner===name).length}</b></div>)}</div></div><div className="card panel"><div className="panel-title"><CalendarDays size={20}/><h3>Shared roster</h3></div><p>Claims are stored in SharePoint through Power Automate and refresh for everyone.</p></div></aside></main></div>
+}
